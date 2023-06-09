@@ -1,0 +1,204 @@
+---
+title: "Customer segmentation for products marketing"
+author: "Reagan Kesseku"
+date: "2023-01-17"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include = FALSE}
+# set global chunk options
+# -------------------------
+knitr::opts_chunk$set(echo = TRUE, cache = F, tidy = T,
+                      warning = F, message = F, options(digits = 3))
+```
+
+```{r}
+# set working directory
+# ---------------------
+setwd("D:/Ph.D_materials/Programming/R_programming/mdsr/customer-segmentation_analysis")
+```
+
+```{r}
+# Load functions and packages
+# ---------------------------
+source("pkg.R")
+```
+
+## DATA VISUALIZATION 
+
+```{r}
+# Import the Mall customers data 
+# --------------------------------
+customers <-  vroom::vroom("Mall_Customers.csv", col_names =  T)
+
+customers_old <- customers
+
+# Take a glimpse of the data sets
+customers %>% glimpse()
+
+# Change gender to factor 
+# -----------------------
+customers <- customers %>% mutate(
+  Gender = factor(Gender)
+)
+
+
+
+# rename income and spending variables
+# ------------------------------------
+customers <- customers %>% rename(
+  annual_income = 'Annual Income (k$)',
+  spending_score = 'Spending Score (1-100)'
+  )
+
+```
+
+There are `r dim(customers)[1]` observations and `r dim(customers)[2]` variables in the movies data. Additionally, all variables were numerical. However, we convert the class variables to factors.
+
+
+#### EXPLORATORY DATA ANAYSIS
+
+```{r}
+# check the five number summary and other measures of Amount
+# ----------------------------------------------------------
+d <- favstats(Age~ Gender , data = customers)
+
+knitr::kable(d, digits = 3, 
+             format.args = list(scientific = FALSE),
+              caption = 'Descriptive summary of age by gender.')
+
+```
+
+
+```{r , gender-customer-dist}
+tt <- ggplot(data = customers, aes(x = Gender)) + 
+  geom_bar(aes(fill = Gender)) +
+  labs(y = "Number of values in class", 
+       title = "Bar graph of the target variable class") +
+  theme_bw() 
+```
+Clearly, this shows a highly imbalanced classification problem.
+
+```{r "density-plot-Annual_income-gender"}
+# calculate median income and spending across gender 
+mu_income <- plyr::ddply(customers, "Gender", summarise, grp.median = median(annual_income))
+
+mu_spend <- plyr::ddply(customers, "Gender", summarise, grp.median = median(spending_score))
+
+# plot graph
+# -----------
+ p1 <- ggplot(data = customers, aes(x = annual_income, color = Gender, fill = Gender)) +
+  geom_density(alpha=0.3) +
+  geom_vline(data = mu_income, aes(xintercept = grp.median, color = Gender),
+             linetype = "dashed") +
+ scale_fill_manual(values = c("#E7B800", "#00AFBB"))+
+  labs(title = "Annual income distribution across gender",
+       x = "Annual income") +
+  theme_bw()
+
+
+ p2 <- ggplot(data = customers, aes(x = spending_score, color = Gender, fill = Gender)) +
+  geom_density(alpha=0.3) +
+  geom_vline(data = mu_spend, aes(xintercept = grp.median, color = Gender),
+             linetype = "dashed") +
+ scale_fill_manual(values = c("#E7B800", "#00AFBB"))+
+  labs(title = "Spending score across gender",
+       x = "Spending score") +
+  theme_bw()
+
+p1 / p2
+```
+
+```{r, density }
+# Change violin plot colors by gender
+# ------------------------------------
+p <- ggplot(data = customers, aes(x = Gender, y = annual_income)) +
+  geom_violin(trim = FALSE, aes(fill = Gender)) +
+  geom_boxplot(width = 0.15, color = c("blue", "green"),
+               fill = c("white", "white")) + 
+  geom_point() + 
+  labs(y = "Annual income of customers", 
+       title = "Violin plot of income distribution") +
+  theme_bw()
+p
+```
+
+```{r}
+customers %>% select(Gender) %>% unique()
+
+
+# scale spending and income variable
+# -----------------------------------
+customers <- customers %>% mutate(
+  annual_income = scale(annual_income),
+  spending_score = scale(spending_score)
+  )
+```
+The descriptive statistics show that the amount values are highly variable. 
+This suggests the we scale the data as it helps with most machine learning algorithms.
+
+```{r}
+#Elbow Method for finding the optimal number of clusters
+set.seed(123)
+# Compute and plot wss for k = 2 to k = 15.
+k.max <- 10
+kk =  customers %>% select(annual_income, spending_score)
+data <- kk
+wcss <- sapply(1:k.max,
+        function(k){kmeans(data, k, nstart= 10,iter.max = 350)$tot.withinss}
+        )
+wcss
+kt <- data.frame("k.max" = 1:k.max, "wcss" = wcss)
+
+# plot graph
+ggplot(kt, aes(x = k.max, y = wcss)) +
+  geom_line(color = "red") +
+  geom_point() +
+labs(y = "Within-cluster sum of squares",
+     x = "Number of clusters",
+     title = "Using \"Elbow method\" to choose appropriate K") +
+  theme_bw()
+
+```
+
+```{r}
+set.seed(6)
+library(cluster)
+
+clust_Variables <- customers %>% select(annual_income, spending_score) %>% kmeans(5, iter.max = 300, nstart = 2) %>% fitted("classes") %>% as.factor()
+
+
+customers <- customers %>%
+mutate(clust_Variables = clust_Variables)
+
+
+p3 <- customers %>% ggplot(aes(x = annual_income, y = spending_score)) +
+  geom_point(aes(color = clust_Variables), alpha = 0.5) + 
+  scale_color_brewer(palette = "Set2") + 
+  labs(y = "Spending score of customers",
+       x = "Annual income of customers",
+       title = "K-Means clustering of customers income and spending") +
+  theme_bw()
+
+
+p4 <- customers %>% ggplot(aes(x = annual_income, y = spending_score)) +
+  geom_point(aes(color = clust_Variables), alpha = 0.5) + 
+  scale_color_brewer(palette = "Set2") + 
+  labs(y = "Spending score of customers",
+       x = "Annual income of customers",
+       title = "K-Means clustering of customers income and spending by Gender") +
+  facet_wrap( ~ Gender, nrow = 1) +
+  theme_bw()
+p3 / p4
+```
+
+
+```{r}
+# selecting cluster 4 
+ customers %>% select(CustomerID) %>%
+  filter(clust_Variables == "4") %>% as.vector()
+```
+
+
